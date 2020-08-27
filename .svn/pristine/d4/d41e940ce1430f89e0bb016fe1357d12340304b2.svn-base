@@ -1,0 +1,26 @@
+package com.blackboard.classin.mapper;
+
+import java.util.List;
+import java.util.Map;
+
+import com.blackboard.classin.entity.ClassinCourseClass;
+
+public interface ClassinCourseClassMapper {
+
+	ClassinCourseClass findByClassinCourseId(String classinCourseId);
+
+	void save(Map<String, Object> paramMap);
+
+	void updateToExpired(Map<String, String> paramMap);
+
+	void updateAssistantPhone(Map<String, String> paramMap);
+
+	List<ClassinCourseClass> getReplayList(String classinCourseId);
+
+	void delete(String classinClassId);
+
+	ClassinCourseClass findByClassId(String classinClassId);
+
+	void updateClassToDelay(ClassinCourseClass classinCourseClass);
+	
+}

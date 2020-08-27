@@ -1,0 +1,16 @@
+package com.blackboard.classin.mapper;
+
+import java.util.List;
+import java.util.Map;
+
+import com.blackboard.classin.entity.BbCourseClassinCourse;
+
+public interface BbCourseClassinCourseMapper {
+	
+	void createClassinCourseOnBbCourse(Map<String, String> paramMap);
+
+	BbCourseClassinCourse findByCourseId(String bbCourseId);
+
+	List<BbCourseClassinCourse> findAllBbClassInCourse();
+
+}

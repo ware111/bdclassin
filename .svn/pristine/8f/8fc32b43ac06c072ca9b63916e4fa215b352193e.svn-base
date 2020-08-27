@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd" >
+<mapper namespace="com.blackboard.classin.mapper.ClassinCourseClassMapper" >
+    
+    <select id="findByClassinCourseId" parameterType="java.lang.String" resultType="com.blackboard.classin.entity.ClassinCourseClass">
+    	select 
+    		classin_course_id classinCourseId,classin_class_id classinClassId, dtcreated dtCreated,
+    		teacher_phone teacherPhone ,assistant_phone assistantPhone ,expire_status expireStatus,
+    		live_url liveURL,live_info liveInfo,delete_status deleteStatus,
+    		class_time_length classTimeLength,close_class_delay closeClassDelay
+    	from classin_course_class 
+    	where classin_course_id=#{classinCourseId} 
+    	and expire_status = '0' and delete_status = 'N'
+    </select>
+    
+    <select id="findByClassId" parameterType="java.lang.String" resultType="com.blackboard.classin.entity.ClassinCourseClass">
+    	select 
+    		classin_course_id classinCourseId,classin_class_id classinClassId, dtcreated dtCreated,
+    		teacher_phone teacherPhone ,assistant_phone assistantPhone ,expire_status expireStatus,
+    		live_url liveURL,live_info liveInfo,delete_status deleteStatus,
+    		class_time_length classTimeLength,close_class_delay closeClassDelay
+    	from classin_course_class 
+    	where classin_class_id=#{classinClassId} 
+    </select>
+    
+    <insert id="save" parameterType="java.util.Map">
+    	insert into classin_course_class(classin_course_id,classin_class_id,dtcreated,teacher_phone,live_url,live_info,delete_status) 
+    	values(#{classinCourseId},#{classinClassId},#{dtCreated},#{teacherPhone},#{liveURL},#{liveInfo},'N')
+    </insert>
+    
+    <update id="updateToExpired" parameterType="java.util.Map">
+    	update classin_course_class set expire_status = '1' where classin_course_id = #{classinCourseId} and classin_class_id = #{classinClassId}
+    </update>
+    
+    <update id="updateAssistantPhone" parameterType="java.util.Map">
+    	update classin_course_class 
+    		set assistant_phone=#{assistantPhone}
+		where classin_course_id = #{classinCourseId} and classin_class_id = #{classinClassId}
+    </update>
+    
+    <select id="getReplayList" parameterType="java.lang.String" resultType="com.blackboard.classin.entity.ClassinCourseClass">
+    	select classin_course_id classinCourseId,classin_class_id classinClassId, dtcreated dtCreated,
+    		teacher_phone teacherPhone ,assistant_phone assistantPhone ,expire_status expireStatus,live_url liveURL,live_info liveInfo,delete_status deleteStatus
+    	from classin_course_class 
+    	where classin_course_id = #{classinCourseId} 
+    	and live_url is not null
+    	and delete_status = 'N'
+    	order by dtcreated desc
+    </select>
+    
+    <update id="delete" parameterType="java.lang.String">
+    	update classin_course_class set delete_status = 'Y' where classin_class_id = #{classinClassId}
+    </update>
+    
+    <update id="updateClassToDelay" parameterType="com.blackboard.classin.entity.ClassinCourseClass">
+    	update classin_course_class 
+	    	set expire_status = '0',
+	    	class_time_length=#{classTimeLength},
+	    	close_class_delay=#{closeClassDelay}
+	    where classin_class_id = #{classinClassId}
+    </update>
+</mapper>

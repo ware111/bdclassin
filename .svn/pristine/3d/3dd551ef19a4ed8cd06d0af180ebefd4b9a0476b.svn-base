@@ -1,0 +1,43 @@
+package com.blackboard.classin.controller;
+
+/*
+ * @author lian.lixia
+ * 2018-11-15
+ */
+import java.util.List;
+
+import com.blackboard.classin.entity.UserInfo;
+import com.blackboard.classin.exception.CustomException;
+import com.blackboard.classin.service.UserService;
+
+
+import org.apache.log4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Controller;
+import org.springframework.ui.Model;
+import org.springframework.web.bind.annotation.RequestMapping;
+
+@Controller
+@RequestMapping("/user")
+public class UserController {
+	
+	@Autowired
+	private UserService userService;
+	
+	//日志
+	private Logger log = Logger.getLogger(UserController.class);
+	
+	@RequestMapping("/getUsers.do")
+	 public String getUserList(Model model) throws Exception {
+		//List<UserInfo> userList = userInfoService.getUserList();
+		//需要抛出异常示例：CustomException("提示异常信息","异常类","异常方法");
+	    List<UserInfo> userList=null;			
+		if(userList==null) 		
+			throw new CustomException("user表没有数据","UserController","getUserList");				
+		model.addAttribute("userList", userList);		
+		return "/userInfo";
+	}	
+	
+		
+
+}

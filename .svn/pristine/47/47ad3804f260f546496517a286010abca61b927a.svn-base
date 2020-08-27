@@ -1,0 +1,617 @@
+package com.blackboard.classin.controller;
+
+import java.io.IOException;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+
+import org.apache.log4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Controller;
+import org.springframework.ui.Model;
+import org.springframework.web.bind.annotation.RequestMapping;
+
+import com.blackboard.classin.constants.Constants;
+import com.blackboard.classin.entity.ClassinClassMeeting;
+import com.blackboard.classin.entity.ClassinClassVideo;
+import com.blackboard.classin.entity.ClassinCourseClass;
+import com.blackboard.classin.mapper.ClassinClassMeetingMapper;
+import com.blackboard.classin.mapper.ClassinClassVideoMapper;
+import com.blackboard.classin.mapper.ClassinCourseClassMapper;
+import com.blackboard.classin.mapper.SystemRegistryMapper;
+import com.blackboard.classin.service.IClassinCourseClass;
+import com.blackboard.classin.util.HttpClient;
+import com.blackboard.classin.util.SystemUtil;
+import com.fasterxml.jackson.core.JsonParseException;
+import com.fasterxml.jackson.databind.JsonMappingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+import blackboard.persist.PersistenceException;
+import blackboard.platform.BbServiceManager;
+import blackboard.platform.authentication.SessionManager;
+import blackboard.platform.session.BbSession;
+
+@Controller
+@RequestMapping("/classinCourseClass")
+public class ClassinCourseClassController {
+	
+	private Logger log = Logger.getLogger(ClassinCourseClassController.class);
+	
+	@Autowired
+	private IClassinCourseClass iClassinCourseClass;
+	
+	@Autowired
+	private ClassinCourseClassMapper classinCourseClassMapper;
+	
+	@Autowired
+	private ClassinClassMeetingMapper classinClassMeetingMapper;
+	
+	@Autowired
+	private SystemRegistryMapper systemRegistryMapper;
+	
+	/**
+	 * 删除整个课节回放信息
+	 * @param request
+	 * @param response
+	 * @param course_id
+	 * @param classinClassId
+	 * @return
+	 * @throws IOException 
+	 * @throws JsonMappingException 
+	 * @throws JsonParseException 
+	 */
+	@RequestMapping("/delete.do")
+	public String deleteClassinClass(HttpServletRequest request,HttpServletResponse response,
+			String course_id,String classinClassId,String classinCourseId,Model model)
+					throws JsonParseException, JsonMappingException, IOException {
+		log.info("deleteClassinClass: classinClassId="+classinClassId);
+		ObjectMapper objectMapper = new ObjectMapper();
+		//删除classin端数据
+		String deleteCourseClassURL = systemRegistryMapper.getURLByKey("classin_deletecourseclass_url");
+		
+		long currentCreateClassTime = System.currentTimeMillis()/1000;
+		String parma1 = "SID="+Constants.SID;
+        String param2 = "safeKey="+SystemUtil.MD5Encode(Constants.SECRET+currentCreateClassTime);
+        String param3 = "timeStamp="+currentCreateClassTime;
+        String param4 = "classId="+classinClassId;
+        
+        StringBuilder stringBuilder = new StringBuilder();
+        
+        stringBuilder.append(parma1).append("&").append(param2).append("&").append(param3)
+        	.append("&").append(param4).append("&");
+        
+        String resultLoginMap = HttpClient.doPost(deleteCourseClassURL, stringBuilder.toString());
+        log.info("resultLoginMap >>>>"+resultLoginMap);
+        Map<String,Object> classInCourseClassIdMap = new HashMap<String,Object>();
+        
+        if(resultLoginMap != null && !resultLoginMap.equals("")) {
+			classInCourseClassIdMap = objectMapper.readValue(resultLoginMap, Map.class);
+        	//解析返回的数据
+            Map<String,Object> errorInfo = (Map<String, Object>) classInCourseClassIdMap.get("error_info");
+            String errno = errorInfo.get("errno").toString();
+            String error = errorInfo.get("error").toString();
+            
+            //classin成功删除
+            if("1".equals(errno) || "254".equals(errno) || "631".equals(errno) || "632".equals(errno)){
+            	//BB删除
+            	classinCourseClassMapper.delete(classinClassId);
+            }else{
+            	model.addAttribute("source", "来自Classin的提示信息:课节删除提示");
+        		model.addAttribute("errno", errno);
+        		model.addAttribute("error", error);
+        		model.addAttribute("type", null);
+        		return "/classin/tips";
+            }
+            
+        }
+		List<ClassinCourseClass> classinCourseClassList = classinCourseClassMapper.getReplayList(classinCourseId);
+//		if(classinCourseClassList != null && classinCourseClassList.size() != 0) {
+//			for(int i=0;i<classinCourseClassList.size();i++) {
+//				ClassinCourseClass ClassinCourseClass = classinCourseClassList.get(i);
+//				ClassinCourseClass.setDtCreated(dtCreated););
+//			}
+//		}
+		model.addAttribute("classinCourseClassList", classinCourseClassList);
+		return "/classin/replayList";
+	}
+	/**
+	 * 创建课节
+	 * @param request
+	 * @param response
+	 * @param replayFlag
+	 * @throws PersistenceException 
+	 */
+	@RequestMapping("/create.do")
+	public String create(HttpServletRequest request,HttpServletResponse response,String course_id,Model model,String type) throws PersistenceException {
+		SessionManager sessionManager = (SessionManager) SessionManager.Factory.getInstance();
+		BbSession bbSession = sessionManager.getSession(request, response);
+		String classinCourseId = bbSession.getGlobalKey("classinCourseId");
+		String replayFlag = "";
+		if(type != null && "meetingroom".equals(type)) {
+			//研讨室，需要去查询meeting
+			ClassinClassMeeting classinClassMeeting = classinClassMeetingMapper.findByClassinCourseId(classinCourseId);
+			if(classinClassMeeting != null) {
+				//已有其他老师创建研讨室，请勿重复创建--直接返回，重新进入界面
+				return "redirect:/bbCourseClassinCourse/create.do?course_id="+course_id+"&type="+type;
+			}
+		}else {
+			ClassinCourseClass classinCourseClass = classinCourseClassMapper.findByClassinCourseId(classinCourseId);
+			if(classinCourseClass != null) {
+				//已有其他老师创建课节，请勿重复创建--直接返回，重新进入界面
+				//判断是否过期？
+				return "redirect:/bbCourseClassinCourse/create.do?course_id="+course_id+"&type="+type;
+			}
+		}
+		//创建课节
+		String infos = iClassinCourseClass.createClassinCourseClass(request,response,type,course_id);
+		
+		String errno = bbSession.getGlobalKey("errno");
+		String error = bbSession.getGlobalKey("error");
+		
+		//唤醒客户端并进入教室入口
+		if(infos.equals("awakeClassinClient")) {
+			String tips = "classTeacher";
+			return "redirect:/classinCourseClass/awakeClassinClient.do?course_id="+course_id+"&tips="+tips+"&type="+type;
+		}else if(infos.equals("ClassinClassCreatedFailed")){
+			model.addAttribute("source", "来自Classin的提示信息:课节创建提示");
+    		model.addAttribute("errno", errno);
+    		model.addAttribute("error", error);
+    		model.addAttribute("type", type);
+    		return "/classin/tips";
+		}else if("DeleteCourseStudnet".equals(infos)){
+			//删除课程下的学生
+			return "redirect:/bbCourseClassinCourse/delCourseStudent.do?course_id="+course_id+"&flag=createClass172&type="+type;
+		}else if(infos.equals("NeedAddTeacherToClassin")){
+			//用户不是classin机构下的教师用户，需要将该用户添加为该机构的教师
+			return "redirect:/classinCourseClass/addTeacherToClassin.do?course_id="+course_id+"&type="+type;
+		}else if("replayFlagNull".equals(infos) || "NetworkIsInstability".equals(infos)){
+			//其他错误信息
+			log.info("else if replayFlagNull");
+			model.addAttribute("source", "来自BB的提示信息");
+    		model.addAttribute("error", "由于网络不稳定，课节未成功创建，请返回上一步重新创建~");
+    		model.addAttribute("type", type);
+			return "/classin/tips";
+		}else {
+			//其他错误信息
+			model.addAttribute("type", type);
+			model.addAttribute("source", "来自BB的提示信息");
+    		model.addAttribute("error", "由于网络不稳定，课节未成功创建，请返回上一步重新创建~");
+			return "/classin/tips";
+		}
+		
+	}
+	
+	/**
+     * 将教师添加到机构中
+     * @return
+     * @throws IOException 
+     * @throws JsonMappingException 
+     * @throws JsonParseException 
+	 * @throws PersistenceException 
+     */
+    @RequestMapping("/addTeacherToClassin.do")
+    public String addTeacherToClassin(String course_id,HttpServletRequest request,HttpServletResponse response,Model model,String flag,String type) 
+    		throws JsonParseException, JsonMappingException, IOException, PersistenceException {
+    	log.info("classin addTeacher");
+    	SessionManager sessionManager = (SessionManager) SessionManager.Factory.getInstance();
+		BbSession bbSession = sessionManager.getSession(request, response);
+    	String telephone = bbSession.getGlobalKey("telephone");
+    	long currentCreateClassTime = System.currentTimeMillis()/1000;	
+        
+        String parma1 = "SID="+Constants.SID;
+        String param2 = "safeKey="+SystemUtil.MD5Encode(Constants.SECRET+currentCreateClassTime);
+        String param3 = "timeStamp="+currentCreateClassTime;
+        String param4 = "teacherAccount="+telephone;
+        String param5 = "teacherName="+SystemUtil.getCurrentUser().getUserName();
+        
+        StringBuilder strBuilder = new StringBuilder();
+		strBuilder.append(parma1).append("&").append(param2).append("&").append(param3)
+        	.append("&").append(param4).append("&").append(param5);
+		
+		String classin_addteacher_url = systemRegistryMapper.getURLByKey("classin_addteacher_url");
+    	String addTeacherResultMap = HttpClient.doPost(classin_addteacher_url, strBuilder.toString());
+    	log.info("addTeacher resultMap>>>"+addTeacherResultMap);
+    	
+    	Map<String,Object> addTeacherMap = new HashMap<String,Object>();
+    	
+    	if(addTeacherResultMap != null && !addTeacherResultMap.equals("")) {
+        	ObjectMapper objectMapper = new ObjectMapper();
+        	addTeacherMap = objectMapper.readValue(addTeacherResultMap, Map.class);
+        	//解析返回的数据
+            Map<String,Object> errorInfo = (Map<String, Object>) addTeacherMap.get("error_info");
+            String errno = errorInfo.get("errno").toString();
+            String error = errorInfo.get("error").toString();
+            
+            if("1".equals(errno)) {
+            	//成功将教师添加到机构中
+            	//继续创建课节/或继续添加助教
+            	if("assistant".equals(flag)) {
+            		return "redirect:/classinCourseClass/addAsAssistant.do?course_id="+course_id+"&type="+type;
+            	}
+            	return "redirect:/classinCourseClass/create.do?course_id="+course_id+"&type="+type;
+            }else if("113".equals(errno)){
+            	String bbUserId = bbSession.getGlobalKey("userId");
+            	//注册用户
+        		String param_nickname = "nickname="+bbUserId;
+        		String param_pwd = "password="+telephone;
+        		String param_telephone = "telephone="+telephone;
+        		String param_schoolMemeber = "addToSchoolMember=2";
+        		StringBuilder strsBuilder = new StringBuilder();
+        		strsBuilder.append(parma1).append("&").append(param2).append("&").append(param3).append("&").append(param_telephone)
+        			.append("&").append(param_nickname).append("&").append(param_pwd).append("&").append(param_schoolMemeber);
+        		
+        		String classin_register_url = systemRegistryMapper.getURLByKey("classin_register_url");
+        		String resultRegisterMap = HttpClient.doPost(classin_register_url, strsBuilder.toString());
+        		
+        		log.info("resultRegisterMap is >>>"+resultRegisterMap); 
+        		
+        		Map<String,Object> registerMap = new HashMap<String,Object>();
+        		if(resultRegisterMap != null && !resultRegisterMap.equals("")) {
+        			registerMap = objectMapper.readValue(resultRegisterMap, Map.class);
+        			Map<String,Object> registerErrorInfo = (Map<String, Object>) registerMap.get("error_info");
+        			String registerErrno = registerErrorInfo.get("errno").toString();
+        			if("1".equals(registerErrno)) {
+        				//继续添加教师
+        				return "redirect:/classinCourseClass/addTeacherToClassin.do?course_id="+course_id+"&type="+type;
+        			}else {
+        				//用户注册失败
+                		model.addAttribute("source", "来自BB的提示消息");
+                		model.addAttribute("error", "您还未注册classin账号，请先至classin客户端注册~");
+                		model.addAttribute("noregist","noregist");
+                		model.addAttribute("type", type);
+                		return "/classin/tips";
+        			}
+        		}
+        		model.addAttribute("source", "来自BB的提示消息");
+        		model.addAttribute("noregist","noregist");
+        		model.addAttribute("error", "您还未注册classin账号，请先至classin客户端注册~");
+        		model.addAttribute("type", type);
+        		return "/classin/tips";
+        		
+            }else {
+            	model.addAttribute("source", "来自classin的提示消息");
+            	model.addAttribute("errno", errno);
+            	model.addAttribute("error", error);
+            	model.addAttribute("type", type);
+            	return "/classin/tips";
+            }
+        }else {
+        	model.addAttribute("source", "来自BB的提示消息");
+        	model.addAttribute("error", "课节创建成功，如未跳转，请刷新页面后获取进入教室的链接~");
+        	model.addAttribute("type", type);
+        	return "/classin/tips";
+        }
+    	
+    }
+	
+	/**
+	 * 唤醒客户端
+	 * @return
+	 * @throws IOException 
+	 * @throws JsonMappingException 
+	 * @throws JsonParseException 
+	 * @throws PersistenceException 
+	 */
+	@RequestMapping("/awakeClassinClient.do")
+	public String awakeClassinClient(HttpServletRequest request,HttpServletResponse response,Model model,String course_id,String tips,String type) throws JsonParseException, JsonMappingException, IOException, PersistenceException {
+		SessionManager sessionManager = (SessionManager) SessionManager.Factory.getInstance();
+		BbSession bbSession = sessionManager.getSession(request, response);
+		//唤醒客户端并进入教室入口
+		String classinEntranceUrl = systemRegistryMapper.getClassinEntranceURL();
+		
+		String telephone = bbSession.getGlobalKey("telephone");
+		String classinUid = bbSession.getGlobalKey("classinUid");
+		String classinCourseId = bbSession.getGlobalKey("classinCourseId");
+		String classinClassId = bbSession.getGlobalKey("classinClassId");
+		
+		long currentLoignTime = System.currentTimeMillis()/1000;
+    	String parma1 = "SID="+Constants.SID;
+    	String param2 = "safeKey="+SystemUtil.MD5Encode(Constants.SECRET+currentLoignTime);
+    	String param3 = "timeStamp="+currentLoignTime;
+    	//String param4 = "telephone="+telephone;
+    	//手机号改为uid
+    	String param4 = "uid="+classinUid;
+    	String param5 = "courseId="+ classinCourseId;
+    	String param6 = "classId="+classinClassId;
+    	ObjectMapper objectMapper = new ObjectMapper();
+    	
+		//跳转到唤醒客户端页面
+		StringBuilder stringBuilder = new StringBuilder();
+        
+        stringBuilder.append(parma1).append("&").append(param2).append("&").append(param3)
+        	.append("&").append(param4).append("&").append(param5).append("&").append(param6);
+        
+        String resultLoginMap = HttpClient.doPost(classinEntranceUrl, stringBuilder.toString());
+        
+        log.info("resultLoginMap >>>>"+resultLoginMap);
+        
+        Map<String,Object> classInCourseClassIdMap = new HashMap<String,Object>();
+        
+        if(resultLoginMap != null && !resultLoginMap.equals("")) {
+        	
+			classInCourseClassIdMap = objectMapper.readValue(resultLoginMap, Map.class);
+        	//解析返回的数据
+            Map<String,Object> errorInfo = (Map<String, Object>) classInCourseClassIdMap.get("error_info");
+            String errno = errorInfo.get("errno").toString();
+            String error = errorInfo.get("error").toString();
+            
+            //成功返回信息
+        	if("1".equals(errno)) {
+        		String data = (String) classInCourseClassIdMap.get("data");
+        		String conditions = "";
+        		if(data != null && !data.equals("")) {
+        			conditions = data.split("\\?")[1];
+        		}
+        		if("classTeacher".equals(tips)) {
+        			tips = "您已作为教师注册进课节中！";
+        		}else if("alreadyClassStudent".equals(tips)) {
+        			tips = "您已经是该课程下的学生，直接进入教室即可！";
+        		}else if("classNoAssistant".equals(tips)) {
+        			tips = "已作为学生注册进该课节！";
+        		}else if("classStudent".equals(tips)) {
+        			tips = "您已作为学生注册进该课节！";
+        		}else if("teacherAndAssistant".equals(tips)) {
+        			tips = "您已经是该课节的教师/助教，直接进入即可！";
+        		}else if("teacherAddAsStudent".equals(tips)){
+        			tips ="您已作为学生注册进该课节！";
+        		}else if("classAssistant".equals(tips)){
+        			tips = "您已作为助教注册进课程中！";
+        		}else {
+        			tips ="您已在课节中，点击上方按钮进入教室即可！";
+        		}
+        		if("meetingroom".equals(type)) {
+        			Map<String,String> paramMap = new HashMap<String,String>();
+        			paramMap.put("classinClassId", classinClassId);
+        			paramMap.put("classinCourseId", classinCourseId);
+        			String liveURL = classinClassMeetingMapper.getLiveURLByClassId(paramMap);
+        			model.addAttribute("liveURL", liveURL);
+        		}
+        		model.addAttribute("type", type);
+        		model.addAttribute("tips", tips);
+        		model.addAttribute("conditions", conditions);
+        		return "/classin/awakeClassIn";
+        	}else {
+        		model.addAttribute("source", "来自Classin的提示信息:获取进入教室url失败");
+        		model.addAttribute("errno", errno);
+        		model.addAttribute("error", error);
+        		model.addAttribute("type", type);
+        		return "/classin/tips";
+        	}
+          }else {
+        	  model.addAttribute("type", type);
+        	  model.addAttribute("source", "来自BB的提示信息");
+      		  model.addAttribute("error", "获取进入教室url成功，如未跳转，请刷新页面后进行下一步操作~");
+      		  return "/classin/tips";
+          }
+	}
+	
+	/**
+	 * 为课节添加助教（实际上是修改课节信息）
+	 * @return
+	 * @throws IOException 
+	 * @throws JsonMappingException 
+	 * @throws JsonParseException 
+	 * @throws PersistenceException 
+	 */
+	@RequestMapping("/addAsAssistant.do")
+	public String addAsAssistant(HttpServletRequest request,HttpServletResponse response,Model model,String course_id,String type) throws JsonParseException, JsonMappingException, IOException, PersistenceException {
+		
+		final String classin_editCourseClass_url = systemRegistryMapper.getURLByKey("classin_editCourseClass_url");
+		SessionManager sessionManager = (SessionManager) SessionManager.Factory.getInstance();
+		BbSession bbSession = sessionManager.getSession(request, response);
+		String telephone = bbSession.getGlobalKey("telephone");
+		String classinUid = bbSession.getGlobalKey("classinUid");
+		String classinCourseId = bbSession.getGlobalKey("classinCourseId");
+		String classinClassId = bbSession.getGlobalKey("classinClassId");
+		
+		long currentLoignTime = System.currentTimeMillis()/1000;
+    	String parma1 = "SID="+Constants.SID;
+    	String param2 = "safeKey="+SystemUtil.MD5Encode(Constants.SECRET+currentLoignTime);
+    	String param3 = "timeStamp="+currentLoignTime;
+    	//String param4 = "assistantAccount="+telephone;
+    	//修改手机号为uid
+    	String param4 = "assistantUid="+classinUid;
+    	String param5 = "courseId="+ classinCourseId;
+    	String param6 = "classId="+classinClassId;
+    	
+    	ObjectMapper objectMapper = new ObjectMapper();
+    	
+		//跳转到唤醒客户端页面
+		StringBuilder stringBuilder = new StringBuilder();
+        
+        stringBuilder.append(parma1).append("&").append(param2).append("&").append(param3)
+        	.append("&").append(param4).append("&").append(param5).append("&").append(param6);
+        
+        String reslutEditClassMapString = HttpClient.doPost(classin_editCourseClass_url, stringBuilder.toString());
+        log.info("resultLoginMap >>>>"+reslutEditClassMapString);
+        
+        Map<String,Object> editClassResultMap = new HashMap<String,Object>();
+        
+        if(reslutEditClassMapString != null && !reslutEditClassMapString.equals("")) {
+        	
+    		editClassResultMap = objectMapper.readValue(reslutEditClassMapString, Map.class);
+        	//解析返回的数据
+            Map<String,Object> errorInfo = (Map<String, Object>) editClassResultMap.get("error_info");
+            String errno = errorInfo.get("errno").toString();
+            String error = errorInfo.get("error").toString();
+            
+            //课节修改成功
+        	if("1".equals(errno)) {
+        		if("meetingroom".equals(type)){
+        			ClassinClassMeeting classinCourseassMeeting = (ClassinClassMeeting) bbSession.getGlobalObject("classinCourseClass");
+            		if(classinCourseassMeeting != null) {
+            			Map<String,String> paramMap = new HashMap<String,String>();
+            			paramMap.put("assistantPhone", telephone);
+            			paramMap.put("classinCourseId", classinCourseassMeeting.getClassinCourseId());
+            			paramMap.put("classinClassId", classinCourseassMeeting.getClassinClassId());
+            			classinClassMeetingMapper.updateAssistantPhone(paramMap);
+            		}
+        		}else{
+        			ClassinCourseClass classinCourseClass = (ClassinCourseClass) bbSession.getGlobalObject("classinCourseClass");
+        			if(classinCourseClass != null) {
+        				Map<String,String> paramMap = new HashMap<String,String>();
+        				paramMap.put("assistantPhone", telephone);
+        				paramMap.put("classinCourseId", classinCourseClass.getClassinCourseId());
+        				paramMap.put("classinClassId", classinCourseClass.getClassinClassId());
+        				classinCourseClassMapper.updateAssistantPhone(paramMap);
+        			}
+        		}
+        		//同时传conditions
+        		return "redirect:/classinCourseClass/awakeClassinClient.do?course_id="+course_id+"&tips=classAssistant&type="+type;
+        	}else if("140".equals(errno)){
+        		//课节正在上课，不能编辑或删除
+        		return "redirect:/classinCourseClass/addAsClassStudent.do?course_id="+course_id+"&tips140=teacherAddAsStudent&type="+type;
+        	}else if("318".equals(errno)){
+        		// 	表示助教不是本机构老师
+        		return "redirect:/classinCourseClass/addTeacherToClassin.do?course_id="+course_id+"&flag=assistant&type="+type;
+        	}else if("319".equals(errno)){
+        		//表示课程下的学生不能添加为助教
+        		return "redirect:/bbCourseClassinCourse/delCourseStudent.do?course_id="+course_id+"&flag=editClass319&type="+type;
+        	}else {
+        		model.addAttribute("source", "来自Classin的提示信息:添加助教失败");
+        		model.addAttribute("errno", errno);
+        		model.addAttribute("error", error);
+        		model.addAttribute("type", type);
+        		return "/classin/tips";
+        	}
+          }else {
+        	  model.addAttribute("type", type);
+        	  model.addAttribute("source", "来自BB的提示信息");
+      		  model.addAttribute("error", "为课节添加助教成功，如未跳转，请刷新页面后获取进入教室的链接~");
+      		  return "/classin/tips";
+          }
+	}
+	
+	/**
+	 * 添加为课节的学生/旁听用户
+	 * @return
+	 * @throws IOException 
+	 * @throws JsonMappingException 
+	 * @throws JsonParseException 
+	 * @throws PersistenceException 
+	 */
+	@RequestMapping("/addAsClassStudent.do")
+	public String addAsClassStudent(HttpServletRequest request,HttpServletResponse response,Model model,String course_id,String tips140,String type) throws JsonParseException, JsonMappingException, IOException, PersistenceException {
+		
+		log.info("do addAsClassStudent");
+		SessionManager sessionManager = (SessionManager) SessionManager.Factory.getInstance();
+		BbSession bbSession = sessionManager.getSession(request, response);
+		String telephone = bbSession.getGlobalKey("telephone");
+		String classinUid = bbSession.getGlobalKey("classinUid");
+		String classInCourseId = bbSession.getGlobalKey("classinCourseId");
+		String userId = bbSession.getGlobalKey("userId");
+		
+		long currentLoignTime = System.currentTimeMillis()/1000;
+		String parma1 = "SID="+Constants.SID;
+		String param2 = "safeKey="+SystemUtil.MD5Encode(Constants.SECRET+currentLoignTime);
+		String param3 = "timeStamp="+currentLoignTime;
+		String param5 = "courseId="+ classInCourseId;
+		
+		//课程下添加学生/旁听
+    	String param_identity = "identity=1";
+    	//String param_studentAccount = "studentAccount="+telephone;
+    	//手机号修改为uid
+    	String param_studentAccount = "studentUid="+classinUid;
+    	String param_studentName = "studentName="+userId;
+    	
+    	String classin_addcoursestudent_url = systemRegistryMapper.getURLByKey("classin_addcoursestudent_url");
+    	
+    	StringBuilder sBuilder = new StringBuilder();
+    	sBuilder.append(parma1).append("&").append(param2).append("&").append(param3)
+    		.append("&").append(param_identity).append("&").append(param_studentAccount).append("&")
+    		.append(param_studentName).append("&").append(param5);
+    	ObjectMapper objectMapper = new ObjectMapper();
+    	String addCourseStudentResultMapString = HttpClient.doPost(classin_addcoursestudent_url, sBuilder.toString());
+    	log.info("addCourseStudentResultMapString is >>>"+addCourseStudentResultMapString);
+    	Map<String,Object> addCourseStudentResultMap = new HashMap<String,Object>();
+    	if(addCourseStudentResultMapString != null && !"".equals(addCourseStudentResultMapString)) {
+			addCourseStudentResultMap = objectMapper.readValue(addCourseStudentResultMapString, Map.class);
+        	//解析返回的数据
+            Map<String,Object> errorInfo = (Map<String, Object>) addCourseStudentResultMap.get("error_info");
+            String errno = errorInfo.get("errno").toString();
+            String error = errorInfo.get("error").toString();
+            
+            //添加学生成功
+        	if("1".equals(errno)) {
+        		//唤醒客户端
+        		String tips = "";
+        		if(SystemUtil.isTeacher()) {
+        			tips = "classNoAssistant";//只能作为学生注册进课程！
+        			if(tips140 != null && "teacherAddAsStudent".equals(tips140)) {
+        				tips = tips140;
+        			}
+        		}else {
+        			tips = "classStudent";//您已作为学生注册进该课程！
+        		}
+        		return "redirect:/classinCourseClass/awakeClassinClient.do?course_id="+course_id+"&tips="+tips+"&type="+type;
+        	}else if("163".equals(errno)){
+        		//该用户已注册进该课程，直接进入
+        		String tips = "alreadyClassStudent";//您已经是该课节下的学生，请直接进入教室即可！
+        		
+        		return "redirect:/classinCourseClass/awakeClassinClient.do?course_id="+course_id+"&tips="+tips+"&type="+type;
+        	}else if("113".equals(errno)){
+        		//该学生还未注册classin
+        		String bbUserId = bbSession.getGlobalKey("userId");
+            	//注册用户
+        		String param_nickname = "nickname="+bbUserId;
+        		String param_pwd = "password="+telephone;
+        		String param_telephone = "telephone="+telephone;
+        		String param_schoolMemeber = "addToSchoolMember=1";
+        		StringBuilder strsBuilder = new StringBuilder();
+        		strsBuilder.append(parma1).append("&").append(param2).append("&").append(param3).append("&").append(param_telephone)
+        			.append("&").append(param_nickname).append("&").append(param_pwd).append("&").append(param_schoolMemeber);
+        		
+        		String classin_register_url = systemRegistryMapper.getURLByKey("classin_register_url");
+        		String resultRegisterMap = HttpClient.doPost(classin_register_url, strsBuilder.toString());
+        		log.info("resultRegisterMap is >>>"+resultRegisterMap);
+        		
+        		//继续添加学生
+        		return "redirect:/classinCourseClass/addAsClassStudent.do?course_id="+course_id+"&type="+type;
+        	}else if("332".equals(errno)){
+        		//课程老师或助教不能添加为课程学生或旁听
+        		return "redirect:/bbCourseClassinCourse/removeCourseTeacher.do?course_id="+course_id+"&type="+type;
+        	}else {
+        		model.addAttribute("source", "来自Classin的提示信息:为课程添加学生失败");
+        		model.addAttribute("errno", errno);
+        		model.addAttribute("error", error);
+        		model.addAttribute("type", type);
+        		return "/classin/tips";
+        	}
+    	}else {
+    		model.addAttribute("type", type);
+    		model.addAttribute("source", "来自BB的提示信息");
+    		model.addAttribute("error", "已将您成功注册为该课节的学生，如未跳转，请刷新页面后获取进入教室的链接~");
+    		return "/classin/tips";
+    	}
+	}
+	
+	/**
+	 * 获取历史回放列表
+	 * @param request
+	 * @param response
+	 * @param model
+	 * @param course_id
+	 * @return
+	 * @throws PersistenceException 
+	 */
+	@RequestMapping("/getRepalyList.do")
+	public String getRepalyList(HttpServletRequest request,HttpServletResponse response,Model model,String course_id) throws PersistenceException {
+		
+		log.info("get getRepalyList");
+		SessionManager sessionManager = (SessionManager) SessionManager.Factory.getInstance();
+		BbSession bbSession = sessionManager.getSession(request, response);
+		String classinCourseId = bbSession.getGlobalKey("classinCourseId");
+		if(classinCourseId != null && !"".equals(classinCourseId)){
+			//根据classinCourseId获取已过期的且有回放URL的
+			List<ClassinCourseClass> classinCourseClassList = classinCourseClassMapper.getReplayList(classinCourseId);
+			model.addAttribute("classinCourseClassList",classinCourseClassList);
+			return "/classin/replayList";
+		}else{
+			return "/classin/replayList";
+		}
+	}
+	
+}
